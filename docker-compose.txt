@@ -1,0 +1,152 @@
+version: '3.8'
+
+services:
+  central-authority:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tailscale-context-server
+    container_name: context-server-central
+    environment:
+      - SERVER_TYPE=central
+      - PORT=3000
+      - DATA_DIR=/data
+      - NODE_ID=central-1
+      - REGION_ID=global
+      - TAILSCALE_AUTH_KEY=${TAILSCALE_AUTH_KEY}
+      - TAILSCALE_HOSTNAME=context-central
+      - TAILSCALE_EXTRA_ARGS=--advertise-tags=tag:central
+    volumes:
+      - central-data:/data
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      - context-net
+
+  region-a-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tailscale-context-server
+    container_name: context-server-region-a
+    environment:
+      - SERVER_TYPE=regional
+      - PORT=3000
+      - DATA_DIR=/data
+      - NODE_ID=region-a-1
+      - REGION_ID=region-a
+      - TAILSCALE_AUTH_KEY=${TAILSCALE_AUTH_KEY}
+      - TAILSCALE_HOSTNAME=context-region-a
+      - TAILSCALE_EXTRA_ARGS=--advertise-tags=tag:regional,tag:region-a
+    volumes:
+      - region-a-data:/data
+    ports:
+      - "3010:3000"
+      - "3011:3001"
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      - central-authority
+    networks:
+      - context-net
+
+  region-b-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tailscale-context-server
+    container_name: context-server-region-b
+    environment:
+      - SERVER_TYPE=regional
+      - PORT=3000
+      - DATA_DIR=/data
+      - NODE_ID=region-b-1
+      - REGION_ID=region-b
+      - TAILSCALE_AUTH_KEY=${TAILSCALE_AUTH_KEY}
+      - TAILSCALE_HOSTNAME=context-region-b
+      - TAILSCALE_EXTRA_ARGS=--advertise-tags=tag:regional,tag:region-b
+    volumes:
+      - region-b-data:/data
+    ports:
+      - "3020:3000"
+      - "3021:3001"
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      - central-authority
+    networks:
+      - context-net
+
+  edge-cache-a:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tailscale-context-server
+    container_name: context-cache-a
+    environment:
+      - SERVER_TYPE=cache
+      - PORT=3000
+      - DATA_DIR=/data
+      - NODE_ID=cache-a-1
+      - REGION_ID=region-a
+      - TAILSCALE_AUTH_KEY=${TAILSCALE_AUTH_KEY}
+      - TAILSCALE_HOSTNAME=context-cache-a
+      - TAILSCALE_EXTRA_ARGS=--advertise-tags=tag:cache,tag:region-a
+    volumes:
+      - cache-a-data:/data
+    ports:
+      - "3030:3000"
+      - "3031:3001"
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      - region-a-server
+    networks:
+      - context-net
+
+  ai-agent-simulator:
+    build:
+      context: ./agent-simulator
+      dockerfile: Dockerfile
+    image: ai-agent-simulator
+    container_name: ai-agent
+    environment:
+      - CONTEXT_SERVER=http://context-server-region-a:3000
+      - TAILSCALE_AUTH_KEY=${TAILSCALE_AUTH_KEY}
+      - TAILSCALE_HOSTNAME=ai-agent
+      - TAILSCALE_EXTRA_ARGS=--advertise-tags=tag:agent
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      - region-a-server
+    networks:
+      - context-net
+
+volumes:
+  central-data:
+  region-a

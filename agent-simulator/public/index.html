@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent Simulator</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 20px;
+            padding-bottom: 20px;
+        }
+        .conversation-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .context-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .message-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .system-status {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .status-online {
+            background-color: #28a745;
+        }
+        .status-offline {
+            background-color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">AI Agent Simulator</h1>
+        
+        <div class="system-status mb-4">
+            <h5>System Status</h5>
+            <div class="row">
+                <div class="col-md-4">
+                    <p><strong>Agent ID:</strong> <span id="agent-id">Loading...</span></p>
+                    <p><strong>Uptime:</strong> <span id="agent-uptime">Loading...</span></p>
+                </div>
+                <div class="col-md-4">
+                    <p>
+                        <strong>Tailscale:</strong> 
+                        <span class="status-indicator" id="tailscale-status"></span>
+                        <span id="tailscale-info">Loading...</span>
+                    </p>
+                    <p><strong>IP Address:</strong> <span id="tailscale-ip">Loading...</span></p>
+                </div>
+                <div class="col-md-4">
+                    <p>
+                        <strong>Context Server:</strong>
+                        <span class="status-indicator" id="context-server-status"></span>
+                        <span id="context-server-info">Loading...</span>
+                    </p>
+                    <p><strong>URL:</strong> <span id="context-server-url">Loading...</span></p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5>Conversations</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="conversation-list mb-3" id="conversation-list">
+                            <p class="text-muted">No conversations yet</p>
+                        </div>
+                        <button class="btn btn-primary" id="new-conversation-btn">New Conversation</button>
+                    </div>
+                </div>
+                
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5>Contexts</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="context-list mb-3" id="context-list">
+                            <p class="text-muted">No contexts available</p>
+                        </div>
+                        <button class="btn btn-secondary" id="refresh-contexts-btn">Refresh Contexts</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5>Conversation</h5>
+                        <span id="current-conversation-id" class="text-muted">No conversation selected</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="message-list mb-3" id="message-list">
+                            <p class="text-muted">Select a conversation to view messages</p>
+                        </div>
+                        <div class="input-group mb-3">
+                            <input type="text" class="form-control" id="message-input" placeholder="Type a message" disabled>
+                            <div class="input-group-text">
+                                <input class="form-check-input mt-0" type="checkbox" id="use-context-checkbox">
+                                <label class="form-check-label ms-2" for="use-context-checkbox">Use Context</label>
+                            </div>
+                            <button class="btn btn-primary" id="send-message-btn" disabled>Send</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Global state
+        let currentConversationId = null;
+        
+        // DOM elements
+        const conversationListEl = document.getElementById('conversation-list');
+        const contextListEl = document.getElementById('context-list');
+        const messageListEl = document.getElementById('message-list');
+        const messageInputEl = document.getElementById('message-input');
+        const useContextCheckboxEl = document.getElementById('use-context-checkbox');
+        const sendMessageBtnEl = document.getElementById('send-message-btn');
+        const newConversationBtnEl = document.getElementById('new-conversation-btn');
+        const refreshContextsBtnEl = document.getElementById('refresh-contexts-btn');
+        const currentConversationIdEl = document.getElementById('current-conversation-id');
+        
+        // Status elements
+        const agentIdEl = document.getElementById('agent-id');
+        const agentUptimeEl = document.getElementById('agent-uptime');
+        const tailscaleStatusEl = document.getElementById('tailscale-status');
+        const tailscaleInfoEl = document.getElementById('tailscale-info');
+        const tailscaleIpEl = document.getElementById('tailscale-ip');
+        const contextServerStatusEl = document.getElementById('context-server-status');
+        const contextServerInfoEl = document.getElementById('context-server-info');
+        const contextServerUrlEl = document.getElementById('context-server-url');
+        
+        // Helper functions
+        async function fetchJson(url, options = {}) {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                throw new Error(`HTTP error ${response.status}`);
+            }
+            return response.json();
+        }
+        
+        async function postJson(url, data) {
+            return fetchJson(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            });
+        }
+        
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleString();
+        }
+        
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            
+            return `${hours}h ${minutes}m ${secs}s`;
+        }
+        
+        // UI update functions
+        async function updateStatus() {
+            try {
+                const status = await fetchJson('/status');
+                
+                // Update agent status
+                agentIdEl.textContent = status.agent.id;
+                agentUptimeEl.textContent = formatDuration(status.agent.uptime);
+                
+                // Update Tailscale status
+                if (status.tailscale.running) {
+                    tailscaleStatusEl.className = 'status-indicator status-online';
+                    tailscaleInfoEl.textContent = 'Connected';
+                    tailscaleIpEl.textContent = status.tailscale.ip;
+                } else {
+                    tailscaleStatusEl.className = 'status-indicator status-offline';
+                    tailscaleInfoEl.textContent = 'Disconnected';
+                    tailscaleIpEl.textContent = 'N/A';
+                }
+                
+                // Update Context Server status
+                if (status.contextServer.connected) {
+                    contextServerStatusEl.className = 'status-indicator status-online';
+                    contextServerInfoEl.textContent = 'Connected';
+                } else {
+                    contextServerStatusEl.className = 'status-indicator status-offline';
+                    contextServerInfoEl.textContent = 'Disconnected';
+                }
+                contextServerUrlEl.textContent = status.contextServer.url;
+                
+            } catch (error) {
+                console.error('Failed to update status:', error);
+            }
+        }
+        
+        async function updateConversationList() {
+            try {
+                const conversations = await fetchJson('/conversations');
+                
+                if (conversations.length === 0) {
+                    conversationListEl.innerHTML = '<p class="text-muted">No conversations yet</p>';
+                    return;
+                }
+                
+                conversationListEl.innerHTML = '';
+                conversations.forEach(conv => {
+                    const item = document.createElement('div');
+                    item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+                    if (conv.id === currentConversationId) {
+                        item.classList.add('active');
+                    }
+                    
+                    item.innerHTML = `
+                        <div>
+                            <strong>Conversation ${conv.id.substring(0, 8)}</strong>
+                            <small class="d-block text-muted">${formatTimestamp(conv.created)}</small>
+                        </div>
+                        <div>
+                            <span class="badge bg-primary">${conv.messageCount} messages</span>
+                            <span class="badge bg-secondary">${conv.contextCount} contexts</span>
+                        </div>
+                    `;
+                    
+                    item.addEventListener('click', () => selectConversation(conv.id));
+                    conversationListEl.appendChild(item);
+                });
+            } catch (error) {
+                console.error('Failed to update conversation list:', error);
+                conversationListEl.innerHTML = '<p class="text-danger">Failed to load conversations</p>';
+            }
+        }
+        
+        async function updateContextList() {
+            try {
+                const contexts = await fetchJson('/contexts');
+                
+                if (contexts.length === 0) {
+                    contextListEl.innerHTML = '<p class="text-muted">No contexts available</p>';
+                    return;
+                }
+                
+                contextListEl.innerHTML = '';
+                contexts.forEach(ctx => {
+                    const item = document.createElement('div');
+                    item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+                    
+                    const contextId = ctx.id || ctx;
+                    const metadata = ctx.metadata || {};
+                    
+                    item.innerHTML = `
+                        <div>
+                            <strong>Context ${contextId.substring(0, 8)}</strong>
+                            ${metadata.conversationId ? `<small class="d-block text-muted">Conv: ${metadata.conversationId.substring(0, 8)}</small>` : ''}
+                        </div>
+                        <button class="btn btn-sm btn-outline-primary process-btn">Process</button>
+                    `;
+                    
+                    const processBtn = item.querySelector('.process-btn');
+                    processBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        processContext(contextId);
+                    });
+                    
+                    contextListEl.appendChild(item);
+                });
+            } catch (error) {
+                console.error('Failed to update context list:', error);
+                contextListEl.innerHTML = '<p class="text-danger">Failed to load contexts</p>';
+            }
+        }
+        
+        async function updateMessageList() {
+            if (!currentConversationId) {
+                messageListEl.innerHTML = '<p class="text-muted">Select a conversation to view messages</p>';
+                return;
+            }
+            
+            try {
+                const conversation = await fetchJson(`/conversations/${currentConversationId}`);
+                
+                if (conversation.messages.length === 0) {
+                    messageListEl.innerHTML = '<p class="text-muted">No messages in this conversation</p>';
+                    return;
+                }
+                
+                messageListEl.innerHTML = '';
+                conversation.messages.forEach(msg => {
+                    const item = document.createElement('div');
+                    item.className = 'mb-3';
+                    
+                    item.innerHTML = `
+                        <div class="d-flex justify-content-between">
+                            <small class="text-muted">${formatTimestamp(msg.timestamp)}</small>
+                            ${msg.contextId ? `<small class="badge bg-info">Context: ${msg.contextId.substring(0, 8)}</small>` : ''}
+                        </div>
+                        <div class="p-2 bg-light rounded">${msg.content}</div>
+                    `;
+                    
+                    messageListEl.appendChild(item);
+                });
+                
+                // Scroll to bottom
+                messageListEl.scrollTop = messageListEl.scrollHeight;
+            } catch (error) {
+                console.error('Failed to update message list:', error);
+                messageListEl.innerHTML = '<p class="text-danger">Failed to load messages</p>';
+            }
+        }
+        
+        // Action functions
+        async function createNewConversation() {
+            try {
+                const result = await postJson('/conversations', {});
+                currentConversationId = result.conversationId;
+                currentConversationIdEl.textContent = `Conversation: ${currentConversationId.substring(0, 8)}`;
+                
+                // Enable message input
+                messageInputEl.disabled = false;
+                sendMessageBtnEl.disabled = false;
+                
+                await updateConversationList();
+                await updateMessageList();
+            } catch (error) {
+                console.error('Failed to create conversation:', error);
+                alert('Failed to create new conversation');
+            }
+        }
+        
+        async function selectConversation(conversationId) {
+            currentConversationId = conversationId;
+            currentConversationIdEl.textContent = `Conversation: ${conversationId.substring(0, 8)}`;
+            
+            // Enable message input
+            messageInputEl.disabled = false;
+            sendMessageBtnEl.disabled = false;
+            
+            await updateConversationList();
+            await updateMessageList();
+        }
+        
+        async function sendMessage() {
+            const message = messageInputEl.value.trim();
+            const useContext = useContextCheckboxEl.checked;
+            
+            if (!message || !currentConversationId) {
+                return;
+            }
+            
+            try {
+                await postJson(`/conversations/${currentConversationId}/messages`, {
+                    message,
+                    useContext
+                });
+                
+                // Clear input
+                messageInputEl.value = '';
+                
+                await updateMessageList();
+                
+                // If we created a context, update the context list
+                if (useContext) {
+                    await updateContextList();
+                }
+            } catch (error) {
+                console.error('Failed to send message:', error);
+                alert('Failed to send message');
+            }
+        }
+        
+        async function processContext(contextId) {
+            try {
+                const result = await fetchJson(`/contexts/${contextId}/process`);
+                alert(`Context processed successfully! Score: ${result.output.score.toFixed(2)}, Confidence: ${result.output.confidence.toFixed(2)}`);
+            } catch (error) {
+                console.error('Failed to process context:', error);
+                alert('Failed to process context');
+            }
+        }
+        
+        // Event listeners
+        newConversationBtnEl.addEventListener('click', createNewConversation);
+        
+        refreshContextsBtnEl.addEventListener('click', updateContextList);
+        
+        sendMessageBtnEl.addEventListener('click', sendMessage);
+        
+        messageInputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        
+        // Initial load
+        async function initialize() {
+            await updateStatus();
+            await updateConversationList();
+            await updateContextList();
+            
+            // Set up periodic status updates
+            setInterval(updateStatus, 10000);
+        }
+        
+        // Start the application
+        initialize();
+    </script>
+</body>
+</html>
